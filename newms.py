@@ -47,9 +47,101 @@ from scp import SCPClient
 import threading
 import queue
 
+from sqlalchemy import create_engine
+import json
+
 
 # import matplotlib.pyplot as plt
 # from io import BytesIO
+
+class Db():
+    '''
+    /datas/db_info.json 
+    sqlalchemy ver = 1.4.27 
+    '''
+    def __init__(self,db_info_file_path, db_name = None):
+        self.db_info_file_path = db_info_file_path
+        with open(self.db_info_file_path,'r') as f:
+            self.db_info = json.load(f)
+        self._set_db_info(db_info_file_path, db_name)
+        
+    def _set_db_info(self,db_info_file_path, db_name = None):
+        if db_name == None:
+            self.engine_uri1 = f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}?charset=utf8'
+            self.db_engine = create_engine(self.engine_uri1)
+        else:
+            self.db_info['db']=db_name
+            self.engine_uri1 = f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}?charset=utf8'
+            self.engine_uri2 = f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}/{self.db_info["db"]}?charset=utf8'
+            self.db_engine = create_engine(self.engine_uri1)
+            self.engine = create_engine(self.engine_uri2)
+            
+    
+    def set_db_name(self,db_name):
+        try:
+            self.db_info['db'] = db_name
+            self.db_engine = create_engine(f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}?charset=utf8', encoding='utf-8')
+            self.engine = create_engine(f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}/{self.db_info["db"]}?charset=utf8', encoding='utf-8')
+        except Exception as e:
+            print(e)
+            return pd.DataFrame()
+    
+    
+    def show_databases(self):
+        try:
+            with self.db_engine.connect() as con:
+                df = pd.read_sql('show databases',con)
+            return df
+        except Exception as e:
+            print(e)
+            return pd.DataFrame()
+
+    def show_tables(self):
+        try:
+            with self.engine.connect() as con:
+                df = pd.read_sql('show tables',con)
+            return df
+        except Exception as e:
+            print(e)
+            return pd.DataFrame()
+    
+    def show_columns(self,table_name):
+        try:
+            with self.engine.connect() as con:
+                df = pd.read_sql(f'show columns from {table_name}',con)
+            return df
+        except Exception as e:
+            print(e)
+            return pd.DataFrame()
+        
+    def get_db(self, sql, index_col=None,**kwargs):
+        try:
+            with self.engine.connect() as con:
+                df = pd.read_sql(sql,con,index_col=index_col,**kwargs)
+                return df
+        except Exception as e:
+            print(e)
+            return pd.DataFrame()
+       
+    def put_db(self,df,table_name, index=False, if_exists="append", **kwargs):
+        ## 보내기. 
+        ### df에 index내용은 없게 하자.
+        
+        print(kwargs)
+        try:        
+            with self.engine.connect() as con:
+                df.to_sql(f'{table_name}',con = con, index=index,if_exists=if_exists, **kwargs)
+        except Exception as e:
+            print(e)
+            return pd.DataFrame()
+
+    def back_up_db(self, db_name,backup_file_name):
+        # f"mysql -u {root} -p {password} {db_name} < {backup_file_name}.sql"
+        pass
+    
+    def delete_db(self, table, sql):
+        pass
+    
 
 class Dart:
     

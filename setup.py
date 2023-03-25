@@ -2,7 +2,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="new_ms",
+    name="newms",
     packages=find_packages(),
     include_package_data=True,
     version="0.0.1",
