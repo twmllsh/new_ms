@@ -31,7 +31,7 @@ import telegram
 import itertools
 import time
 import chardet
-from text_mining_utils import extract_table
+from newms.text_mining_utils import extract_table
 from io import BytesIO
 
 from telegram.ext import Updater
@@ -48,6 +48,7 @@ import threading
 import queue
 
 from sqlalchemy import create_engine
+import pymysql
 import json
 
 
@@ -65,6 +66,7 @@ class Db():
             self.db_info = json.load(f)
         self._set_db_info(db_info_file_path, db_name)
         
+    ## useUnicode=true&characterEncoding=utf8
     def _set_db_info(self,db_info_file_path, db_name = None):
         if db_name == None:
             self.engine_uri1 = f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}?charset=utf8'
@@ -76,16 +78,22 @@ class Db():
             self.db_engine = create_engine(self.engine_uri1)
             self.engine = create_engine(self.engine_uri2)
             
+            
     
     def set_db_name(self,db_name):
         try:
             self.db_info['db'] = db_name
-            self.db_engine = create_engine(f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}?charset=utf8', encoding='utf-8')
-            self.engine = create_engine(f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}/{self.db_info["db"]}?charset=utf8', encoding='utf-8')
+            self.db_engine = create_engine(f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}?charset=utf8', encoding='utf8')
+            self.engine = create_engine(f'mysql+pymysql://{self.db_info["user"]}:{self.db_info["password"]}@{self.db_info["host"]}:{self.db_info["port"]}/{self.db_info["db"]}?charset=utf8', encoding='utf8')
         except Exception as e:
             print(e)
             return pd.DataFrame()
     
+    def create_db(self,db_name):
+        with pymysql.connect(**self.db_info) as py_db:
+            cursor = py_db.cursor(pymysql.cursors.DictCursor)
+            sql = f'CREATE DATABASE IF NOT EXISTS {db_name}'
+            cursor.execute(sql)
     
     def show_databases(self):
         try:
@@ -139,22 +147,55 @@ class Db():
         # f"mysql -u {root} -p {password} {db_name} < {backup_file_name}.sql"
         pass
     
-    def delete_db(self, table, sql):
-        pass
+    def delete_db(self, table_name, cond_list):
+        '''
+        table_name : table_name
+        cond_list : ["x > 10" , "y == 4", ...    ]
+        '''
+        with pymysql.connect(**self.db_info) as py_db:
+            cursor = py_db.cursor(pymysql.cursors.DictCursor)
+            sql = f'DELETE FROM {table_name} WHERE '
+            for i, cond in enumerate(cond_list):
+                if i == 0 :
+                    sql +=  cond 
+                elif i !=0:
+                    sql += " and " + cond
+            cursor.execute(sql)
+            py_db.commit()
     
+    def rename_table(self, old_table, new_table):
+        with pymysql.connect(**self.db_info) as py_db:
+            cursor = py_db.cursor(pymysql.cursors.DictCursor)
+            # ALTER TABLE old_table RENAME new_table;
+            sql = f"ALTER TABLE {old_table} RENAME {new_table}"
+            print(sql)
+            cursor.execute(sql)
+            py_db.commit()
 
 class Dart:
     
-    def get_dart_df(table, code = None,db_file_name = './dart/all_dart.db'):
-        # table : '전환청구권행사', '전환사채권발행결정', '공급계약', '무상증자결정', '소각결정', '주식취득결정'
-        if code ==None:
-            sql = f'select * from "{table}"'
-        else:
-            sql = f'select * from "{table}" where code ="{code}"'
+    def get_dart_df(db_info_file_path,table='공급계약', code = None,db_name = 'dart'):
+        '''
+        table : '전환청구권행사', '전환사채권발행결정', '공급계약', '무상증자결정', '소각결정', '주식취득결정'
         
-        conn = sqlite3.connect(db_file_name)
-        df = pd.read_sql(sql,conn)
+        '''
+        db= Db(db_info_file_path=db_info_file_path,db_name=db_name)
+        if code ==None:
+            sql = f'select * from {table}'
+        else:
+            sql = f'select * from {table} where code ={code}'
+        print(sql)
+        df = db.get_db(sql)
         return df
+        # # table : '전환청구권행사', '전환사채권발행결정', '공급계약', '무상증자결정', '소각결정', '주식취득결정'
+        # if code ==None:
+        #     sql = f'select * from "{table}"'
+        # else:
+        #     sql = f'select * from "{table}" where code ="{code}"'
+        
+        # conn = sqlite3.connect(db_file_name)
+        # df = pd.read_sql(sql,conn)
+        # return df
 
     
 
@@ -169,12 +210,10 @@ class Mymsg:
         종목추천채널
         Sean_group
     '''
-    def __init__(self,bot_token = None,chat_id = None,chat_name = "sean78_bot"):
-        if bot_token == None:
-            with open('/home/sean/sean/token/telegram_token.txt',"r") as f:
-                self.token = f.readline().strip()
-        else:
-            self.token = bot_token
+    def __init__(self,bot_token_file ,chat_id = None,chat_name = "sean78_bot"):
+        
+        with open(bot_token_file,"r") as f:
+            self.token = f.readline().strip()
             
         self.bot = telegram.Bot(token=self.token)
         
@@ -329,20 +368,31 @@ class Sean_func:
             print('close err')
     
     
-    def get_current_price_from_db(code):
+    def get_current_price_from_db(code,db_info_file_path=None):
         '''
         db에 있는 최근 주가값 가져오기.
-        '''
+        ''' 
+        if db_info_file_path == None:
+            print('dbinfo_file_path 정보가 없습니다.')
+            return None
+        
         if code[0]=="A":
             code = code[1:]
-            
-        sql = f"select * from '{code}' ORDER BY Date DESC limit 1 "
+
         try:
-            con = sqlite3.connect("/home/sean/sean/data/ohlcv_date.db")
-            with con:
-                current_price  = pd.read_sql(sql,con).iloc[0]['Close']
-        except:
-            current_price = 0 
+            db =Db(db_info_file_path,db_name='ohlcv_date')
+            sql = f'select * from t{code} ORDER BY Date DESC limit 1'
+            current_price = db.get_db(sql)
+            current_price = current_price.iloc[0]['Close']
+        except Exception as e:
+            print(e)
+        
+        # try:
+        #     con = sqlite3.connect("/home/sean/sean/data/ohlcv_date.db")
+        #     with con:
+        #         current_price  = pd.read_sql(sql,con).iloc[0]['Close']
+        # except:
+        #     current_price = 0 
         return current_price
     
     def get_휴장일():
@@ -380,8 +430,12 @@ class Sean_func:
             # save data
             if len(js):
                 result = pd.DataFrame(js)
+                ## 폴더 있으면 만들고 
+                if not os.path.isdir("datas"):
+                    os.mkdir("datas")
+        
                 try:
-                    file_name = '/home/sean/sean/data/not_business_day.csv'
+                    file_name = './datas/not_business_day.csv'
                     result.to_csv(file_name,index=False)
                     print(f'{file_name} 저장성공')
                 except Exception:
@@ -398,12 +452,17 @@ class Sean_func:
         휴장일 체크 
         '''
         result = False
-        file_name = '/home/sean/sean/data/not_business_day.csv'
+        file_name = './datas/not_business_day.csv'
         try:
             data = pd.read_csv(file_name)
             data['calnd_dd_dy'] = pd.to_datetime(data['calnd_dd_dy'])
         except:
-            return False
+            try:
+                Sean_func.get_휴장일()
+                data = pd.read_csv(file_name)
+                data['calnd_dd_dy'] = pd.to_datetime(data['calnd_dd_dy'])
+            except:
+                return False
         if date != None:
             today = pd.to_datetime(date)
         else:
@@ -565,7 +624,7 @@ class Sean_func:
     def code_to_code_name(code):
         try:
             conn= sqlite3.connect('./data/code_df.db')
-            query = 'select * from "code_df"'
+            query = 'select * from code_df'
             code_df  = pd.read_sql(query , con = conn,index_col=['cd'])
             acode = "A"+code
             code_name = code_df.loc[acode,'nm']
@@ -738,7 +797,7 @@ class Sean_func:
         ls = list(tables_df['name'])
         return ls
 
-    def event_to_db(pathfile,table_name,list_or_dict):
+    def event_to_db(db_info_file,db_name,table_name,list_or_dict):
         '''
         pathfile 은 현재부터 폴더 하나만 지정가능. ex) './data/foo.db'
         dict or list to database 
@@ -755,13 +814,16 @@ class Sean_func:
         else:
             return False
         
-        con = sqlite3.connect(pathfile)
-        with con :
-            df.to_sql(table_name,con,if_exists='append',index=False)
+        db = Db(db_info_file_path=db_info_file,db_name=db_name)
+        db.put_db(table_name)
+        
+        # con = sqlite3.connect(pathfile)
+        # with con :
+        #     df.to_sql(table_name,con,if_exists='append',index=False)
         
         return True
 
-    def event_from_db(pathfile,table_name,limit = None):
+    def event_from_db(db_info_file,db_name,table_name,limit = None):
         '''
         event_to_db 와 짝꿍
         '''
@@ -773,22 +835,24 @@ class Sean_func:
         else:
             sql = f"SELECT * FROM {table_name}"
 
-        con = sqlite3.connect(pathfile)
-        with con :
-            df = pd.read_sql(sql, con, index_col=None)
+        db = Db(db_info_file,db_name=db_name,)
+        df = db.get_db(sql)
+        # con = sqlite3.connect(pathfile)
+        # with con :
+        #     df = pd.read_sql(sql, con, index_col=None)
         return df
 
     def to_pickle(data,filename,path='./pkl/'):
         '''
         기본 현재폴더에 pkl폴더 만들어서 저장.
         '''
-        if not os.path.exists("pkl"):
-                os.mkdir("pkl")
+        if not os.path.exists("datas"):
+                os.mkdir("datas")
         filepath = path+filename
         with open(filepath, 'wb') as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOLL)
         
-    def read_pickle(filename, path = './pkl/'):
+    def read_pickle(filename, path = './datas/'):
         '''
         기본 현재폴더에 pkl폴더에서 값 가져옴. 
         '''
@@ -925,42 +989,6 @@ class Sean_func:
         
         return df_all
     
-    def get_rest_day(year=None):
-        
-        if year == None:
-            year = datetime.now().year
-        
-        url = "http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo"
-        key_for_holiday = "i1lSt8CVsresHBofzKaGQL8Om9hAnHKBXFW5vogDhk006TcHLo3W2o5wb+euF+3swWa+4sHn7zo8sJ2+kCaFbg=="
-        
-        result_dic = {}
-        
-        for mon in range(1,13):
-            params = {
-                'ServiceKey':key_for_holiday,
-                "solYear":str(year),
-                "solMonth": str(mon).zfill(2)
-            }
-            resp = requests.get(url = url, params=params)
-            xml = resp.content
-            dic = xmltodict.parse(xml)
-        
-            
-            try:
-                data = dic['response']['body']['items']['item']
-            except:
-                continue
-            if type(data)!=list:
-                data = [data]
-            if len(data):
-                for item in data:
-                    name, strdate = item['dateName'],item['locdate']
-                    result_dic[strdate]=name
-        
-        holi_list = [item.date() for item in pd.to_datetime(pd.Series(result_dic.keys()))]
-
-        print('이번달 휴일 리스트:', holi_list )
-        return holi_list
 
     def list_to_str_ls(ls,max_len = 100,sept = ' '):
         '''
@@ -980,63 +1008,6 @@ class Sean_func:
                 break
         return data
     
-    def is_holiday(date = None):
-        '''
-        주말인경우 True, 공휴일인경우 True, else False 반환.
-        '''
-        if date == None:
-            tz = pytz.timezone('Asia/Seoul')
-            now = datetime.now(tz=tz)
-            date = now.date()
-            print(tz)
-        
-            
-        date = pd.to_datetime(date).date()
-        print(date,type(date))
-
-        url = "http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo"
-        key_for_holiday = "i1lSt8CVsresHBofzKaGQL8Om9hAnHKBXFW5vogDhk006TcHLo3W2o5wb+euF+3swWa+4sHn7zo8sJ2+kCaFbg=="
-        
-        if date.weekday() >4:
-            print('주말입니다.')
-            return True
-        
-        year= date.year
-        mon = date.month
-        
-        try:
-            result_dic = {}
-            params = {
-                'ServiceKey':key_for_holiday,
-                "solYear":str(year),
-                "solMonth": str(mon).zfill(2)
-                    }
-            resp = requests.get(url = url, params=params)
-            xml = resp.content
-            dic = xmltodict.parse(xml)
-            
-            try:
-                data = dic['response']['body']['items']['item']
-            except:
-                data =[]
-            if type(data)!=list:
-                data = [data]
-            if len(data):
-                for item in data:
-                    name, strdate = item['dateName'],item['locdate']
-                    result_dic[strdate]=name
-            
-            holi_list = [day.date() for day in list(pd.to_datetime(pd.Series(result_dic.keys())))]
-            
-            if date in holi_list:
-                print('공휴일입니다.')
-                return True
-            else:
-                return False
-        except:
-            print('공휴일API 문제발생.')
-            return False
-
     def plot_series(*series,**params):
         '''
         type이 같은 걸 넣어줘야 같이 그림. 
@@ -1063,7 +1034,7 @@ class Sean_func:
 
     def send_krx_chart():
         '''
-        종합지수 그래프 메세지 보내기 
+        종합지수 그래프 메세지 보내기   ((수정필요...))
         '''
         
         import topdown as td
@@ -1101,13 +1072,21 @@ class Sean_func:
         start_day = temp_cls.df.index[-(n+1)]
         last_day = temp_cls.df.index[-1]
 
-        con = sqlite3.connect(f'{data_path}추천종목백업.db')
-        sql = f'select * from "recommended" where 추천날짜 == "{str(start_day)}"'
+        # sql = f'select * from recommended_data where 추천날짜 == "{str(start_day)}"'
 
-        # 과거 추천종목 데이터
-        with con:
-            data = pd.read_sql(sql,con)
+        # # 과거 추천종목 데이터
+        # con = sqlite3.connect(f'{data_path}추천종목백업.db')
+        # with con:
+        #     data = pd.read_sql(sql,con)
+        
+        ## mysql
+        db = Db('./token/db_info.json','mystock')
+        sql = f'select * from recommended_data where 추천날짜 == {str(start_day)}'
+        data = db.get_db(sql)
+        
+        
         data['추천날짜'] = pd.to_datetime(data['추천날짜'])
+        
 
         data = data[data['추천날짜']==start_day]
         data = data.drop_duplicates(['추천날짜','code'])
@@ -1305,6 +1284,8 @@ class Naver:
     def naver_finance_update_db(data_path):
         if data_path[-1] !="/":
             data_path += "/"
+        current_folder_path = os.getcwd()  +"/"
+        data_path = current_folder_path + "token/"
         
         KST = pytz.timezone('Asia/Seoul')
         today = datetime.now(KST)
@@ -1315,10 +1296,13 @@ class Naver:
 
         ## data폴더가 없으면 만들기.
         if not os.path.isdir(data_path):
-            os.mkdir(data_path)
+            os.mkdirs(data_path)
 
 
-        conn = sqlite3.connect(f'{data_path}재무제표.db')
+        # conn = sqlite3.connect(f'{data_path}재무제표.db')
+        
+        db = Db(f'{data_path}db_info.json','financial_state')
+        
         change_ls = []
         for idx,row in tickers[2:].iterrows():
         #for idx,row in tickers[445:].iterrows():
@@ -1350,18 +1334,21 @@ class Naver:
                 tableName = 't_' + gb + "_" + code
                 query = 'select * from ' + tableName
                 try:
-                    with conn:
-                        pre_df = pd.read_sql(query , con = conn,index_col='주요재무정보')
+                    pre_df = db.get_db(query,index_col='주요재무정보')
+                    # with conn:
+                    #     pre_df = pd.read_sql(query , con = conn,index_col='주요재무정보')
                 except:
                     print(f'{code_name}db가져오기 실패')
                     pre_df = pd.DataFrame()
                     ## db에 저장하고 continue
                     try:
-                        with conn:
-                            df.to_sql(tableName,conn,if_exists = 'replace')
-                            print('db 새로 저장 성공!')
+                        db.put_db(df=df, table_name=tableName,if_exists='replace')
+                        print('mysql db 새로 저장 성공!')
+                        # with conn:
+                        #     df.to_sql(tableName,conn,if_exists = 'replace')
+                        #     print('db 새로 저장 성공!')
                     except:
-                        print('db 새로 저장 실패')
+                        print('mysql db 새로 저장 실패')
                     
                     continue
                     
@@ -1373,8 +1360,9 @@ class Naver:
                     change_df = Sean_func.find_difference_two_df(pre_df,df,종목코드 = code , 종목명 = code_name, 감지날짜 = str_today,구분 = gb)
                     if len(change_df):
                         change_ls.append(change_df)
-                        with conn:
-                            df.to_sql(tableName,conn,if_exists = 'replace')
+                        db.put_db(df=df, table_name=tableName,if_exists='replace')
+                        # with conn:
+                        #     df.to_sql(tableName,conn,if_exists = 'replace')
                         print(f'{code_name} {gb} 데이터갱신성공',end = "")
                     else:
                         print(f'{code_name}종목의 변경사항없음..')
@@ -1382,10 +1370,12 @@ class Naver:
                     change_df = pd.DataFrame()
                     print(f'{e} : {code_name} {code} 변경사항 저장 오류.....')
 
-        conn.close()
+        # conn.close()
 
         ## 검색자료가 있으면 ...
         if len(change_ls):
+            db = Db(f'{data_path}db_info.json','mystock')
+            
             result_df = pd.concat(change_ls)
             result_df.reset_index(drop=True,inplace=True)
             result_df['변동구분'] = result_df.apply(lambda x: '신규' if x['이전값']==0 and x['최근값']!=0 else '삭제' if x['이전값']!=0 and x['최근값']==0 else '변동'  , axis=1   )
@@ -1393,9 +1383,10 @@ class Naver:
             
             ## 변경사항 저장. 
             try:
-                con = sqlite3.connect(f'{data_path}재무제표_변경.db')
-                with con:
-                    result_df.to_sql('change_list',con,if_exists='append',index=False)
+                db.put_db(result_df,'financial_state_change',if_exists='append',index=False)
+                # con = sqlite3.connect(f'{data_path}재무제표_변경.db')
+                # with con:
+                #     result_df.to_sql('change_list',con,if_exists='append',index=False)
                 # con.close()
             except:
                 print('추정실적 변경사항 데이터저장 오류') 
@@ -1466,6 +1457,11 @@ class Naver:
             result_ls.append(temp_dic)
         result = pd.DataFrame(result_ls)
         return result
+
+    def test():
+        current_folder_path = os.getcwd()  +"/"
+        data_path = current_folder_path + "token/"
+        print(data_path)
 
     def _get_group_list(group = 'theme'):
         '''
@@ -1718,6 +1714,9 @@ class Naver:
         if data_path[-1] != "/":
             data_path += data_path
             
+        current_folder_path = os.getcwd()  +"/"
+        data_path = current_folder_path + "datas/"
+        
         # 테마정보 dic형태로 load
         with open('f{data_path}theme.pickle', 'rb') as f:
             theme_dic = pickle.load(f)
@@ -1731,11 +1730,14 @@ class Naver:
         pick_file_path = f'{data_path}basic_info_data_temp.pickle'
         ## 기존재무제표 가져옴. 
         # conn = sqlite3.connect("C:/Users/twmll/Google 드라이브/choco_py/sean_stock/data/재무제표정리.db")
+        
+        
+        
         conn = sqlite3.connect(f"{data_path}재무제표정리.db")
         query = 'select * from ' + 'naver_finance'
         with conn:
             재무df = pd.read_sql(query , con = conn,index_col='주요재무정보')
-
+        
         code_df = Fnguide.get_ticker_by_fnguide(data_path)
 
         # 혹시 백업파일이 있다면 가져와서 리스트에 담는다 
@@ -1894,13 +1896,17 @@ class Naver:
 
         df.to_excel(f'{data_path}basic_info.xlsx')
 
+        
+        
         try:
-            conn = sqlite3.connect(f'{data_path}basic_info.db')
-            with conn:
-                df.to_sql('info',conn,if_exists='replace',index=False)
+            db = Db(current_folder_path+'token/db_info.json','mystock')
+            db.put_db(df,'basic_info',if_exists='replace',index=False)
+            # conn = sqlite3.connect(f'{data_path}basic_info.db')
+            # with conn:
+            #     df.to_sql('info',conn,if_exists='replace',index=False)
 
-        except:
-            print('db저장오류')
+        except Exception as e:
+            print('db저장오류',e)
 
         ## 작업모두 완료시 피클백업파일 삭제.
         if os.path.isfile(pick_file_path):
@@ -1989,6 +1995,11 @@ class Fnguide:
 
         if data_path[-1] !="/":
             data_path += "/"
+        if data_path == None:
+            current_folder_path = os.getcwd()  +"/"
+            data_path = current_folder_path + "datas/"
+            
+            
         KST = pytz.timezone('Asia/Seoul')
         today = datetime.now(KST)
         str_today = today.strftime("%Y%m%d %H:%M")
@@ -1996,7 +2007,7 @@ class Fnguide:
 
         ## data폴더가 없으면 만들기.
         if not os.path.isdir(data_path):
-            os.mkdir(data_path)
+            os.mkdirs(data_path)
 
 
         for idx,row in tickers[2:].iterrows():
@@ -2026,22 +2037,25 @@ class Fnguide:
                 print(f'{code_name} 데이터 가져오기 실패. 일단 스킵.')
                 continue
             
-            conn = sqlite3.connect(f'{data_path}fn재무제표.db')
-            
+            db = Db(current_folder_path+'token/db_info.json','fn재무제표')
+            # conn = sqlite3.connect(f'{data_path}fn재무제표.db')
             tableName = 't_' + code
-            query = 'select * from ' + tableName
+            # query = 'select * from ' + tableName
             
             try:
-                with conn:
-                    df.to_sql(tableName,conn,if_exists = 'replace')
-                    print('db 새로 저장 성공!')
+                db.put_db(df,tableName,if_exists='replace')
+                # with conn:
+                #     df.to_sql(tableName,conn,if_exists = 'replace')
+                print('db 새로 저장 성공!')
             except Exception as e:
                 print('db 새로 저장 실패',e)
                 print(idx,'정지')
                 # break  # 오류나면 정지
                 continue  ## 오류나도 계속 다음 진행
             finally:
-                conn.close()
+                pass
+            
+                # conn.close()
 
         
 
@@ -2049,25 +2063,38 @@ class Fnguide:
 
         tableName = 't_' + code
         query = 'select * from ' + tableName
-        if data_path[-1] !="/":
-                data_path += "/"
-        conn = sqlite3.connect(f'{data_path}fn재무제표.db')
+        if data_path ==None:
+            data_path = current_folder_path + "datas/"
+        else:
+            if data_path[-1] !="/":
+                    data_path += "/"
+            
+        current_folder_path = os.getcwd()  +"/"
+
+        db = Db(current_folder_path+'token/db_info.json','fn_financial_state')
+        
         try:
-            with conn:
-                pre_df = pd.read_sql(query , con = conn,index_col='IFRS')
+            pre_df = db.get_db(query,index_col="IFRS")
+            pre_df = pre_df.astype('int',errors='ignore')
+        except:
+            pass
+        
+        # conn = sqlite3.connect(f'{data_path}fn재무제표.db')
+        # try:
+        #     with conn:
+        #         pre_df = pd.read_sql(query , con = conn,index_col='IFRS')
                 
-                pre_df = pre_df.astype('int')  ## 형 변형.
+        #         pre_df = pre_df.astype('int')  ## 형 변형.
                 
-                # print('기존데이터 가져오기 성공')
-        except Exception as e:
-            print(e)
-            pre_df = pd.DataFrame()
-            ## db에 저장하고 continue
-        finally:
-            conn.close()
+        #         # print('기존데이터 가져오기 성공')
+        # except Exception as e:
+        #     print(e)
+        #     pre_df = pd.DataFrame()
+        #     ## db에 저장하고 continue
+        # finally:
+        #     conn.close()
         
         return pre_df
-
 
     def graph_재무제표(self):
         '''
@@ -2125,19 +2152,23 @@ class Fnguide:
 
         return 포괄손익계산서,재무상태표,현금흐름표
 
-    def get_ticker_by_fnguide( data_path='/home/sean/sean/data/' , option = "web" ):
+    def get_ticker_by_fnguide( data_path=None , option = "web" ):
         '''
         Fnguide 에서 ticker정보 크롤링 함수.
         df로 반환
         option : "web"(default) contain save db , "db"
         
         '''
-        if data_path[-1]!="/":
-            data_path += "/"
+        if data_path == None:    
+            current_folder_path = os.getcwd()  +"/"
+            data_path = current_folder_path + "datas/"
+        else:
+            if data_path[-1]!="/":
+                data_path += "/"
             
         # data폴더가 없으면 만들기. 
         if not os.path.exists(data_path):
-            os.mkdir(data_path)
+            os.mkdirs(data_path)
             print(f'maked {data_path} directory')
         
         file_name = f'{data_path}code_df.db'
@@ -2182,18 +2213,28 @@ class Fnguide:
             
 
             ## 코드정보 db로 저장.     
-            con = sqlite3.connect(file_name)
-            with con:
-                df.to_sql(table_name,con,if_exists='replace',index=False)
+            db = Db(current_folder_path+'token/db_info.json','mystock')
+            db.put_db(df,table_name,if_exists='replace',index=False)
+            
+            # ## 코드정보 db로 저장.     
+            # con = sqlite3.connect(file_name)
+            # with con:
+            #     df.to_sql(table_name,con,if_exists='replace',index=False)
             
             return df
         
         else :
             try:
-                con = sqlite3.connect(file_name)
-                query = f"select * from '{table_name}'"
-                df = pd.read_sql(query,con)
+                ## 코드정보 db로 가져오기.     
+                query = f"select * from {table_name}"
+                db = Db(current_folder_path+'token/db_info.json','mystock')
+                df = db.get_db(query)
                 
+                
+                # con = sqlite3.connect(file_name)
+                # query = f"select * from '{table_name}'"
+                # df = pd.read_sql(query,con)
+                # df = 
                 return df
             except:
                 print('데이터베이스 파일오류')
@@ -2576,7 +2617,7 @@ class Investor:
         return df
 
 
-    def investor_to_db(data_path , start_date = None):
+    def investor_to_db(data_path=None , start_date = None):
         '''
         start_date ~ today
         start_date == None : db확인해서 이후날짜부터 ~ today 까지 작업.
@@ -2585,30 +2626,42 @@ class Investor:
         KST = pytz.timezone('Asia/Seoul')
         today = datetime.now(KST).date()
         
-        if data_path[-1] != "/":
-            data_path += "/"
-            
+        if data_path == None:    
+            current_folder_path = os.getcwd()  +"/"
+            data_path = current_folder_path + "datas/"
+        else:
+            if data_path[-1]!="/":
+                data_path += "/"
         
-        file_name = f'{data_path}new_investor.db'
+        db = Db(current_folder_path+'token/db_info.json','mystock')
+
+        # file_name = f'{data_path}new_investor.db'
         
         ## make folder 
         if not os.path.exists(data_path):
-            os.mkdir(data_path)
+            os.mkdirs(data_path)
             print(f'maked {data_path} directory')
         
         
         if start_date == None:
-            sql = "select max(날짜) from 'investor' "
-            con = sqlite3.connect(file_name)
-            try:
-                with con:
-                    max_date = pd.read_sql(sql, con,)
-                start_date = pd.Timestamp(max_date.iloc[0,0])
-            except:
-                start_date = datetime.today() - timedelta(days=90)
+            sql = "select max(날짜) from investor"
+            max_date = db.get_db(sql)
+            start_date = pd.Timestamp(max_date.iloc[0,0])
             
             start_str_date = start_date.strftime('%Y%m%d')
             end_str_date = today.strftime('%Y%m%d')
+            
+            
+            # con = sqlite3.connect(file_name)
+            # try:
+            #     with con:
+            #         max_date = pd.read_sql(sql, con,)
+            #     start_date = pd.Timestamp(max_date.iloc[0,0])
+            # except:
+            #     start_date = datetime.today() - timedelta(days=90)
+            
+            # start_str_date = start_date.strftime('%Y%m%d')
+            # end_str_date = today.strftime('%Y%m%d')
         
         else:
             start_date = pd.Timestamp(start_date)
@@ -2630,7 +2683,7 @@ class Investor:
             
             now = datetime.now(KST)
             cond_time = 14 < now.hour <= 16
-            is_holiday = Sean_func.is_holiday()
+            is_holiday = Sean_func.is_휴장일()
             if len(result)==0 & cond_time & (not is_holiday):
                 # 데이터가 없고 휴일이 아니고 시간조건이 맞으면 5분후 재실행. 
                 time.sleep(5* 60)
@@ -2654,20 +2707,24 @@ class Investor:
             if len(result):
                 # 기존데이터 있으면 지우기. 
                 print('data saving....')
-                con = sqlite3.connect(file_name)
+                # con = sqlite3.connect(file_name)
                 del_date_ls = [date.strftime("%Y-%m-%d") for date in date_range]
                 for str_date in del_date_ls:
                     try:
                         print(str_date , 'db파일 지움')
-                        sql = f"delete  from 'investor' where 날짜 = '{str_date}'"
-                        with con:
-                            cursor = con.cursor()
-                            cursor.execute(sql)
-                            con.commit() ### 지울땐 커밋을 꼭  해야한다.!
+                        # sql = f"delete  from 'new_investor' where 날짜 = '{str_date}'"
+                        db.delete_db('investor',[f'날짜 = "{str_date}"'])
+                        
+                        # with con:
+                        #     cursor = con.cursor()
+                        #     cursor.execute(sql)
+                        #     con.commit() ### 지울땐 커밋을 꼭  해야한다.!
                     except:
                         pass
                     finally:
-                        con.close()
+                        pass
+                    
+                        # con.close()
                         
                 ## old data delete idea!
                 
@@ -2683,10 +2740,12 @@ class Investor:
                 
                 
                 # 데이터 추가하기. 
-                con = sqlite3.connect(file_name)
-                with con:
-                    result.to_sql('investor',con, if_exists="append", index=False)
-                    print('새로운데이터 저장성공.')
+                db.put_db(result,"investor",index=False,if_exists='append')
+                
+                # con = sqlite3.connect(file_name)
+                # with con:
+                #     result.to_sql('investor',con, if_exists="append", index=False)
+                print('새로운데이터 저장성공.')
                     
                 
                 ## 저장완료되었다면. 임시저장했던 pickle파일 제거. 
@@ -4498,13 +4557,17 @@ class Anal_tech(Talib):
 
             # db에서 가져오기. 
             try:
-                db_path = self.data_path + "new_investor.db"
-                con = sqlite3.connect(db_path)
-                sql = f'SELECT * FROM "investor" where 티커 = "{code}" and 날짜 >= "{start}"'
+                current_folder_path = os.getcwd()  +"/"
+                data_path = current_folder_path + "datas/"
+                db = Db(current_folder_path+'token/db_info.json','mystock')
+                # db_path = self.data_path + "new_investor.db"
+                # con = sqlite3.connect(db_path)
+                sql = f'SELECT * FROM investor where 티커 = "{code}" and 날짜 >= "{start}"'
                 # print(sql)
-                with con:
-                    i_df = pd.read_sql(sql,con)
-                    # i_df = i_df.set_index('날짜')
+                i_df = db.get_db(sql)
+                # with con:
+                #     i_df = pd.read_sql(sql,con)
+                #     # i_df = i_df.set_index('날짜')
             except:
                 print('investor 자료없음.')
                 return None
@@ -4557,10 +4620,16 @@ class Anal_tech(Talib):
         try:
             tableName = 't_' + gb + "_" + self.code
             query = 'select * from ' + tableName
-            file_path = self.data_path + "재무제표.db"
-            conn = sqlite3.connect(file_path)
-            with conn:
-                pre_df = pd.read_sql(query , con = conn,index_col='주요재무정보')
+            # file_path = self.data_path + "재무제표.db"
+            # conn = sqlite3.connect(file_path)
+        
+            current_folder_path = os.getcwd()  +"/"
+            data_path = current_folder_path + "datas/"
+            
+            db = Db(current_folder_path+'token/db_info.json','financial_state')
+            pre_df = db.get_db(query,index_col='주요재무정보')
+            # with conn:
+            #     pre_df = pd.read_sql(query , con = conn,index_col='주요재무정보')
             return pre_df.T
         except:
             return pd.DataFrame()
@@ -4675,8 +4744,11 @@ class Anal_tech(Talib):
         if "현금가" in dir(self):
             if self.현금가 != 0:
                 self.현재가 = self.df.Close[-1]
-                self.현금가대비현재가 = int(((self.현재가 / self.현금가) - 1) * 100)
-                
+                try:
+                    self.현금가대비현재가 = int(((self.현재가 / self.현금가) - 1) * 100)
+                except:
+                    self.현금가대비현재가 = -100
+                    
     def _arrange_issue_info(self,file_name = 'issue_code_list.pickle'):
         '''
         file_name : file path + name
@@ -4740,14 +4812,19 @@ class Anal_tech(Talib):
         else:
             self.naver_upjong = ""
     
-    def get_ohlcv(self):
-        db_file_name = '/home/sean/sean/data/ohlcv_date.db'
-        con = sqlite3.connect(db_file_name)
-        sql = f'SELECT * FROM "{self.code}"'
-        with con:
-            data = pd.read_sql(sql, con)
-        data['Date'] = pd.to_datetime(data['Date'])
-        data  = data.set_index('Date')
+    def get_ohlcv_from_db(self):
+
+        current_folder_path = os.getcwd()  +"/"
+        data_path = current_folder_path + "datas/"
+        db = Db(current_folder_path+'token/db_info.json','ohlcv_date')
+        sql = f'SELECT * FROM t{self.code}'
+        try:
+            data = db.get_db(sql)
+            data['Date'] = pd.to_datetime(data['Date'])
+            data  = data.set_index('Date')
+        except Exception as e:
+            print(e)
+            return pd.DataFrame()
         return data
     
     def to_back(self,n=1):
@@ -4809,16 +4886,23 @@ class Anal_tech(Talib):
         '''
         by : 'db', 'fdr'
         '''
+        current_folder_path = os.getcwd()  +"/"
+        data_path = current_folder_path + "datas/"
+        
         today = datetime.today()
         start = today - timedelta(days = 450)
         if exchange == "KS":
             if by=='db':
-                self.df = self.get_ohlcv()
+                self.df = self.get_ohlcv_from_db()
             elif by =='fdr':
                 self.df = fdr.DataReader(self.code, start)
+                # db저장.
+                db = Db(current_folder_path+'token/db_info.json','ohlcv_date')
+                db.put_db(self.df,f"t{self.code}",index=True,if_exists='replace')
+                
                 
             else:
-                self.df = self.get_ohlcv()
+                self.df = self.get_ohlcv_from_db()
                 
             if self.n != 0:
                 self.df = self.df[:-self.n]       
@@ -6191,19 +6275,31 @@ class Ant_tech(Anal_tech):
                 ## 
                 try:
                     recommended_df = pd.DataFrame(recommended_list)
-                    con = sqlite3.connect(f'{data_path}추천종목백업.db')
-                    with con:
-                        recommended_df.to_sql('recommended',con,if_exists='append',index=False)
-                        try:
-                            today = datetime.today().date()
-                            기준날짜 = today - timedelta(days= 60)  ## 두달이상데이터 삭제.
-                            기준날짜 = str(기준날짜)
-                            cursor = con.cursor()
-                            sql = f'DELETE FROM "recommended" WHERE 추천날짜 < "{기준날짜}"'
-                            cursor.execute(sql)
-                            con.commit()
-                        except Exception as e:
-                            print('추천종목백업 과거데이터 삭제 실패!',e)
+                    # con = sqlite3.connect(f'{data_path}추천종목백업.db')
+                    current_folder_path = os.getcwd()  +"/"
+                    data_path = current_folder_path + "datas/"
+                    db = Db(current_folder_path+'token/db_info.json','mystock')
+                    db.put_db(recommended_df,'recommened_data',if_exists='append',index=False)
+                    try:
+                        today = datetime.today().date()
+                        기준날짜 = today - timedelta(days= 60)  ## 두달이상데이터 삭제.
+                        기준날짜 = str(기준날짜)
+                        db.delete_db('recommended_data',[f'추천날짜 < "{기준날짜}"'])
+                    except Exception as e:
+                        print(e)
+                        
+                    # with con:
+                    #     recommended_df.to_sql('recommended',con,if_exists='append',index=False)
+                    #     try:
+                    #         today = datetime.today().date()
+                    #         기준날짜 = today - timedelta(days= 60)  ## 두달이상데이터 삭제.
+                    #         기준날짜 = str(기준날짜)
+                    #         cursor = con.cursor()
+                    #         sql = f'DELETE FROM "recommended" WHERE 추천날짜 < "{기준날짜}"'
+                    #         cursor.execute(sql)
+                    #         con.commit()
+                    #     except Exception as e:
+                    #         print('추천종목백업 과거데이터 삭제 실패!',e)
                     
                 
                 except Exception as e:
@@ -6720,20 +6816,32 @@ class Stock(Ant_tech):
     
     
     def get_news(self):
-        file_name = "/home/sean/sean/data/stockplus_news.db"
-        conn = sqlite3.connect(file_name)
+        # file_name = "/home/sean/sean/data/stockplus_news.db"
+        # conn = sqlite3.connect(file_name)
         table_name ="news"
-        sql = f"select * from '{table_name}' where title like '%{self.code_name}%'"
-
+        # string = self.code_name
+        # escaped_string = pymysql.converters.escape_string(string)
+        # sql = f"SELECT * FROM {table_name} WHERE column LIKE '%%%s%%'"
+        # sql = sql % escaped_string
+        # sql = pymysql.converters.escape_string(sql)
+        # sql = f"select * from {table_name} where title like '%{self.code_name}%'"  ## like절 오류가남. 
+        sql = f"select * from {table_name}"
+        # sql = "SELECT * FROM news WHERE column LIKE \'%%s%%\'" % escaped_string
+        # print("dljf",sql)
+        current_folder_path = os.getcwd()  +"/"
+        data_path = current_folder_path + "datas/"
+        db = Db(current_folder_path+'token/db_info.json','mystock')
+        data = db.get_db(sql)
         # sql = f"select * from '{table_name}'"
-        data = pd.read_sql(sql,conn)
+        # data = pd.read_sql(sql,conn)
+        data = data.loc[data['title'].str.contains(self.code_name)]
         data['createdAt'] = pd.to_datetime(data['createdAt'])
+        data = data.loc[data['createdAt'] > Sean_func.get_time_KST()-timedelta(days=90)]
         data['Date'] = data['createdAt'].dt.date
-        self.news_df = data
+        self.news_df = data  ## 범위지정필요함.
+        print('news 90일전부터만 표기됨.')
         return data
         
-    
-    
     def is_good_consen(self):
         '''
         올해 0.5이 넘고 다음해 0.5가 넘는종목이나.
@@ -8293,12 +8401,20 @@ class Stock(Ant_tech):
         '''
         fn = '/home/sean/sean/dart/all_dart.db'
         conn = sqlite3.connect(fn)
-        
+        if data_path == None:    
+            current_folder_path = os.getcwd()  +"/"
+            data_path = current_folder_path + "datas/"
+        else:
+            if data_path[-1]!="/":
+                data_path += "/"
+        db = Db(current_folder_path+'token/db_info.json','dart')
+        table_name_ls = list(db.show_tables().iloc[:,0])
+            
         table_name_ls = Sean_func.get_table_list_from_db(fn)
         dart_dict = {}
         for table_name in table_name_ls[1:]:
 
-            sql = f"select * from '{table_name}' where code = '{self.code}'"
+            sql = f"select * from {table_name} where code = '{self.code}'"
             data =  pd.read_sql(sql, conn)
             if len(data)>0:
                 dart_dict[table_name] = data
@@ -8408,10 +8524,17 @@ class Stocks():
             start_date = datetime.now().date() - timedelta(days = n) ## 감지날짜 지정.
             str_start_date = start_date.strftime("%Y%m%d")
             
+            if data_path == None:    
+                current_folder_path = os.getcwd()  +"/"
+                data_path = current_folder_path + "datas/"
+            db = Db(current_folder_path+'token/db_info.json','financial_state_change')
+            table_names = list(db.show_tables().iloc[:0])
+
+
             db_file_name = f'{self.data_path}/재무제표_변경.db'
             con = sqlite3.connect(db_file_name)
-            
             table_name = Sean_func.get_table_list_from_db(db_file_name) ##  db테이블이름 가져오기
+            table_name = list(db.show_tables().iloc[:,0])
             연도별 = Sean_func.실적기준구하기('Y')[1] # 변동되는 연도별 기준
             분기별 = Sean_func.실적기준구하기('Q')[1] # 변동되는 분기별 기준. 
             
@@ -8464,20 +8587,41 @@ def update_db_date(n = 20):
     today = datetime.today().date()
 
     ### update  ohlcv 
-    db_file_name = '/home/sean/sean/data/ohlcv_date.db'
-    con = sqlite3.connect(db_file_name)
+    if data_path == None:    
+        current_folder_path = os.getcwd()  +"/"
+        data_path = current_folder_path + "datas/"
+    else:
+        if data_path[-1]!="/":
+            data_path += "/"
+    db = Db(current_folder_path+'token/db_info.json','ohlcv_date')
+
+
+    # db_file_name = '/home/sean/sean/data/ohlcv_date.db'
+    # con = sqlite3.connect(db_file_name)
     # db불러와서 최근날짜 가져오기.
     try:
-        # 랜덤으로 여러종목 선택해서 마지막날짜가 가장 많은 날짜지정하기.
-        table_names = Sean_func.get_table_list_from_db(db_file_name)
+        table_names = list(db.show_tables()['Tables_in_ohlcv_date'])
         random_codes = random.choices(table_names,k = 30)
-        last_date_temps  = [pd.read_sql(f'select max(Date) from "{code}"',con).iloc[0,0] for code in random_codes]
+        last_date_temps = [db.get_db(f'select max(Date) from {code}').iloc[0,0] for code in random_codes]
+        # last_date_temps  = [pd.read_sql(f'select max(Date) from "{code}"',con).iloc[0,0] for code in random_codes]
         last_date = pd.to_datetime(Counter(last_date_temps).most_common()[0][0])
         option ="db에서 가져온."
     except Exception as e:
         print(e, 'last_date 잡기 오류발생하여 종료함.')
         last_date = today - timedelta(days=450)
         option = "첨부터 "
+        
+    # try:
+    #     # 랜덤으로 여러종목 선택해서 마지막날짜가 가장 많은 날짜지정하기.
+    #     table_names = Sean_func.get_table_list_from_db(db_file_name)
+    #     random_codes = random.choices(table_names,k = 30)
+    #     last_date_temps  = [pd.read_sql(f'select max(Date) from "{code}"',con).iloc[0,0] for code in random_codes]
+    #     last_date = pd.to_datetime(Counter(last_date_temps).most_common()[0][0])
+    #     option ="db에서 가져온."
+    # except Exception as e:
+    #     print(e, 'last_date 잡기 오류발생하여 종료함.')
+    #     last_date = today - timedelta(days=450)
+    #     option = "첨부터 "
 
     print(f"{option} {last_date} 부터 받기")
     # 최근날짜에서 현재까지 날짜 받기
@@ -8534,8 +8678,9 @@ def update_db_date(n = 20):
         extract_df = data[data['Code']==code]
         extract_df = extract_df.loc[:,col]
         try:
-            import_query = f'select * from "{code}"'
-            import_data = pd.read_sql(import_query, con)
+            import_query = f'select * from {code}'
+            import_data = db.get_db(import_query)
+            # import_data = pd.read_sql(import_query, con)
             
             
             # import 된 데이터에 마지막날짜 가져옴. A날짜 
@@ -8572,7 +8717,8 @@ def update_db_date(n = 20):
         x = x.set_index('Date')
         #400개이상이면 제거 하기. 
         x = x[-400:]
-        x.to_sql(code ,con,if_exists='replace')
+        db.put_db(x,code,if_exists='replace')
+        # x.to_sql(code ,con,if_exists='replace')
 
         ## 오늘 당일 데이터만 반환.
         last_day = data['Date'].max()
