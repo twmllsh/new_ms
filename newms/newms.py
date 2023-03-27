@@ -135,7 +135,6 @@ class Db():
         ## 보내기. 
         ### df에 index내용은 없게 하자.
         
-        print(kwargs)
         try:        
             with self.engine.connect() as con:
                 df.to_sql(f'{table_name}',con = con, index=index,if_exists=if_exists, **kwargs)
@@ -1281,11 +1280,14 @@ class Naver:
         return df
 
     # 크롤링하여 DB로 저장
-    def naver_finance_update_db(data_path):
-        if data_path[-1] !="/":
-            data_path += "/"
+    def naver_finance_update_db(data_path=None):
+        
         current_folder_path = os.getcwd()  +"/"
-        data_path = current_folder_path + "token/"
+        if data_path == None:
+            data_path = current_folder_path + "token/"
+        else:
+            if data_path[-1] != "/" :
+                data_path += "/"
         
         KST = pytz.timezone('Asia/Seoul')
         today = datetime.now(KST)
@@ -1312,11 +1314,8 @@ class Naver:
             print( idx, code_name )
             
             for gb in ['연도별', '분기별']:
-
-                # web crawl
                 try:
                     df = Naver.get_naver_finance(code,gb)
-                    
                 except:
                     print(code_name,'웹크롤링 실패!')
                     continue
@@ -1458,11 +1457,6 @@ class Naver:
         result = pd.DataFrame(result_ls)
         return result
 
-    def test():
-        current_folder_path = os.getcwd()  +"/"
-        data_path = current_folder_path + "token/"
-        print(data_path)
-
     def _get_group_list(group = 'theme'):
         '''
         group : theme, upjong
@@ -1579,7 +1573,7 @@ class Naver:
             pass
         return temp_ls
 
-    def __get_item_info(code):
+    def _get_item_info(code):
         '''
         basic info 가져오기
         '''
@@ -1625,7 +1619,7 @@ class Naver:
             code =row['cd'][1:]
             code_name = row['nm']
             try:
-                item_info  = Naver.__get_item_info(code)
+                item_info  = Naver._get_item_info(code)
                 item_info['code'] = code
                 item_info['code_name'] = code_name
             except:
@@ -1703,7 +1697,7 @@ class Naver:
                 pass
 
             
-    def get_basic_info(data_path):
+    def get_basic_info(data_path=None):
         '''
         - 기본정보  데이터로 저장하기. 
         개선할사항: ROE(%) 추가!
@@ -1711,11 +1705,12 @@ class Naver:
         ./data/basic_info.xlsx 로 저장!.
         return : df
         '''
+        current_folder_path = os.getcwd()  +"/"
+        if data_path == None:
+            data_path = current_folder_path + "datas/"
         if data_path[-1] != "/":
             data_path += data_path
             
-        current_folder_path = os.getcwd()  +"/"
-        data_path = current_folder_path + "datas/"
         
         # 테마정보 dic형태로 load
         with open('f{data_path}theme.pickle', 'rb') as f:
@@ -1991,13 +1986,13 @@ class Fnguide:
         return df
 
 
-    def table_재무제표_to_db(data_path = './data/'):
-
+    def table_재무제표_to_db(data_path = None):
+        
+        current_folder_path = os.getcwd()  +"/"
+        if data_path == None:
+            data_path = current_folder_path + "datas/"
         if data_path[-1] !="/":
             data_path += "/"
-        if data_path == None:
-            current_folder_path = os.getcwd()  +"/"
-            data_path = current_folder_path + "datas/"
             
             
         KST = pytz.timezone('Asia/Seoul')
@@ -2059,17 +2054,18 @@ class Fnguide:
 
         
 
-    def get_table_재무제표_from_db(code,data_path = './data'):
+    def get_table_재무제표_from_db(code,data_path = None):
 
         tableName = 't_' + code
         query = 'select * from ' + tableName
+        
+        current_folder_path = os.getcwd()  +"/"
         if data_path ==None:
             data_path = current_folder_path + "datas/"
         else:
             if data_path[-1] !="/":
                     data_path += "/"
             
-        current_folder_path = os.getcwd()  +"/"
 
         db = Db(current_folder_path+'token/db_info.json','fn_financial_state')
         
@@ -2159,8 +2155,8 @@ class Fnguide:
         option : "web"(default) contain save db , "db"
         
         '''
+        current_folder_path = os.getcwd()  +"/"
         if data_path == None:    
-            current_folder_path = os.getcwd()  +"/"
             data_path = current_folder_path + "datas/"
         else:
             if data_path[-1]!="/":
@@ -2616,7 +2612,6 @@ class Investor:
         df = pd.concat(datas)
         return df
 
-
     def investor_to_db(data_path=None , start_date = None):
         '''
         start_date ~ today
@@ -2626,22 +2621,19 @@ class Investor:
         KST = pytz.timezone('Asia/Seoul')
         today = datetime.now(KST).date()
         
+        current_folder_path = os.getcwd()  +"/"
         if data_path == None:    
-            current_folder_path = os.getcwd()  +"/"
             data_path = current_folder_path + "datas/"
         else:
             if data_path[-1]!="/":
                 data_path += "/"
         
         db = Db(current_folder_path+'token/db_info.json','mystock')
-
-        # file_name = f'{data_path}new_investor.db'
         
         ## make folder 
         if not os.path.exists(data_path):
             os.mkdirs(data_path)
             print(f'maked {data_path} directory')
-        
         
         if start_date == None:
             sql = "select max(날짜) from investor"
@@ -2650,23 +2642,13 @@ class Investor:
             
             start_str_date = start_date.strftime('%Y%m%d')
             end_str_date = today.strftime('%Y%m%d')
-            
-            
-            # con = sqlite3.connect(file_name)
-            # try:
-            #     with con:
-            #         max_date = pd.read_sql(sql, con,)
-            #     start_date = pd.Timestamp(max_date.iloc[0,0])
-            # except:
-            #     start_date = datetime.today() - timedelta(days=90)
-            
-            # start_str_date = start_date.strftime('%Y%m%d')
-            # end_str_date = today.strftime('%Y%m%d')
         
         else:
             start_date = pd.Timestamp(start_date)
             start_str_date = start_date.strftime('%Y%m%d')
             end_str_date = today.strftime('%Y%m%d')
+        
+        print(start_str_date, " ~ ",end_str_date)
         
         date_range = pd.date_range(start =start_str_date , end =end_str_date,freq="B")
         print(date_range , '작업중..')
@@ -2861,14 +2843,16 @@ class Investor:
         print('날짜체크' ,start_date, end_date)
         return df
 
-    
-    
-    def arrange_investor_lastdays(data_path, last_date = None):
+    def arrange_investor_lastdays(data_path=None, last_date = None):
         '''
         # 시총대비 수급 정리
         '''
-        if data_path[-1] != "/":
-            data_path += "/"
+        current_folder_path = os.getcwd()  +"/"
+        if data_path == None:    
+            data_path = current_folder_path + "datas/"
+        else:
+            if data_path[-1]!="/":
+                data_path += "/"
             
         ### 0.8% 이상 상위 100개 추출하기. !!
         rate = 0.8 # 순매수금/ 시가총액
@@ -2900,6 +2884,7 @@ class Investor:
        
 
         return ls
+
 
 class Polling:
     def __init__(self,data_path = './data/'):
@@ -8399,23 +8384,21 @@ class Stock(Ant_tech):
         '''
         dict 형태 {공시종류:df}
         '''
-        fn = '/home/sean/sean/dart/all_dart.db'
-        conn = sqlite3.connect(fn)
-        if data_path == None:    
-            current_folder_path = os.getcwd()  +"/"
-            data_path = current_folder_path + "datas/"
-        else:
-            if data_path[-1]!="/":
-                data_path += "/"
+        # fn = '/home/sean/sean/dart/all_dart.db'
+        # conn = sqlite3.connect(fn)
+        
+        current_folder_path = os.getcwd()  +"/"
+        data_path = current_folder_path + "datas/"
         db = Db(current_folder_path+'token/db_info.json','dart')
         table_name_ls = list(db.show_tables().iloc[:,0])
             
-        table_name_ls = Sean_func.get_table_list_from_db(fn)
+        # table_name_ls = Sean_func.get_table_list_from_db(fn)
         dart_dict = {}
         for table_name in table_name_ls[1:]:
 
-            sql = f"select * from {table_name} where code = '{self.code}'"
-            data =  pd.read_sql(sql, conn)
+            sql = f"select * from {table_name} where code = {self.code}"
+            data = db.get_db(sql)
+            # data =  pd.read_sql(sql, conn)
             if len(data)>0:
                 dart_dict[table_name] = data
         self.dart_dict = dart_dict
@@ -8524,33 +8507,43 @@ class Stocks():
             start_date = datetime.now().date() - timedelta(days = n) ## 감지날짜 지정.
             str_start_date = start_date.strftime("%Y%m%d")
             
-            if data_path == None:    
-                current_folder_path = os.getcwd()  +"/"
-                data_path = current_folder_path + "datas/"
-            db = Db(current_folder_path+'token/db_info.json','financial_state_change')
-            table_names = list(db.show_tables().iloc[:0])
+            current_folder_path = os.getcwd()  +"/"
+            data_path = current_folder_path + "datas/"
+            
+            db = Db(current_folder_path+'token/db_info.json','mystock')
+            # table_names = list(db.show_tables().iloc[:0])
+            table_name = 'financial_state_change'
 
-
-            db_file_name = f'{self.data_path}/재무제표_변경.db'
-            con = sqlite3.connect(db_file_name)
-            table_name = Sean_func.get_table_list_from_db(db_file_name) ##  db테이블이름 가져오기
-            table_name = list(db.show_tables().iloc[:,0])
+            # db_file_name = f'{self.data_path}/재무제표_변경.db'
+            # con = sqlite3.connect(db_file_name)
+            # table_name = Sean_func.get_table_list_from_db(db_file_name) ##  db테이블이름 가져오기
+            # table_name = list(db.show_tables().iloc[:,0])
             연도별 = Sean_func.실적기준구하기('Y')[1] # 변동되는 연도별 기준
             분기별 = Sean_func.실적기준구하기('Q')[1] # 변동되는 분기별 기준. 
             
             ### sql 조건으로만 가져오기 함. 좀더 정교함이 필요함. 변화량. 과 변화율 
+            # sql = f'''
+            #     select * from {table_name[0]} where 
+            #     감지날짜 > "{str_start_date}" and 
+            #     변동율 > 0.1 and 이전값 >0 and 
+            #     row ="{item}" and 
+            #     col in ("{연도별[-2]}","{연도별[-1]}","{분기별[-1]}")
+            #     '''
             sql = f'''
                 select * from {table_name[0]} where 
                 감지날짜 > "{str_start_date}" and 
                 변동율 > 0.1 and 이전값 >0 and 
-                row ="{item}" and 
                 col in ("{연도별[-2]}","{연도별[-1]}","{분기별[-1]}")
                 '''
                 # 변화량 > 10 and
-            with con :
-                changed_finance_df = pd.read_sql(sql , con)
-                changed_finance_df['감지날짜'] = pd.to_datetime(changed_finance_df['감지날짜'])
+            # with con :
+            #     changed_finance_df = pd.read_sql(sql , con)
+            #     changed_finance_df['감지날짜'] = pd.to_datetime(changed_finance_df['감지날짜'])
 
+            changed_finance_df = db.get_db(sql)
+            ## sql 오류로 그냥 여기서 처리함.
+            changed_finance_df = changed_finance_df.loc[changed_finance_df['row'] == item]
+            
             result = list(changed_finance_df['종목코드'])
             result = list(set(result))
             return result
@@ -8587,17 +8580,11 @@ def update_db_date(n = 20):
     today = datetime.today().date()
 
     ### update  ohlcv 
-    if data_path == None:    
-        current_folder_path = os.getcwd()  +"/"
-        data_path = current_folder_path + "datas/"
-    else:
-        if data_path[-1]!="/":
-            data_path += "/"
+    current_folder_path = os.getcwd()  +"/"
+    data_path = current_folder_path + "datas/"
+    
     db = Db(current_folder_path+'token/db_info.json','ohlcv_date')
 
-
-    # db_file_name = '/home/sean/sean/data/ohlcv_date.db'
-    # con = sqlite3.connect(db_file_name)
     # db불러와서 최근날짜 가져오기.
     try:
         table_names = list(db.show_tables()['Tables_in_ohlcv_date'])

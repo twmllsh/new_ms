@@ -18,8 +18,8 @@ class Worker_investor:
     '''
     def __init__(self, data_path=None):
         if data_path == None:
-            current_folder_path = os.getcwd()  +"/"
-            data_path = current_folder_path + "datas/"
+            current_folder_path = os.getcwd() +"/"
+            self.data_path = current_folder_path + "datas/"
             
         else:
             if data_path[-1] != "/":
@@ -27,23 +27,21 @@ class Worker_investor:
             self.data_path = data_path
         
         ## make folder 
-        if not os.path.exists(data_path):
-            os.mkdirs(data_path)
-            print(f'maked {data_path} directory')
+        if not os.path.exists(self.data_path):
+            os.mkdirs(self.data_path)
+            print(f'maked {self.data_path} directory')
 
+        token_file = f'{current_folder_path}token/telegram_token.txt'
         
-        ## Message 
-        with open('{current_folder_path}token/telegram_token.txt','r') as f:
-            self.token = f.readlines()[0].strip()
-        
-        self.msg = ms.Mymsg(self.token,'sean78_bot')
+        self.msg = ms.Mymsg(token_file, 'sean78_bot')
         script_name = __file__.split("/")[-1]
 
 
         try:
+            print("start")
             result1 = ms.Investor.arrange_investor_lastdays(self.data_path)
             
-            ms.Investor.investor_to_db(self.data_path)
+            ms.Investor.investor_to_db()
 
             # result1 기간별 시총대비 ranking df 담음 list.
             temp_txt = ""
@@ -51,9 +49,10 @@ class Worker_investor:
                 temp_txt += f'{len(temp_df)} ' 
 
             self.msg.send_message(f'{script_name} {self.__class__.__name__} 데이터개수 : {temp_txt}')
-
-        except:
-            self.msg.send_message(f'{script_name} {self.__class__.__name__}  error occcured!')
+            print('finished')
+        except Exception as e:
+            print(e)
+            self.msg.send_message(f'{script_name} {self.__class__.__name__}  error occcured!,{e}')
 
 # 02 업종
 class Worker_upjong:
@@ -63,8 +62,8 @@ class Worker_upjong:
     def __init__(self, data_path=None):
         
         if data_path == None:
-            current_folder_path = os.getcwd()  +"/"
-            data_path = current_folder_path + "datas/"
+            self.current_folder_path = os.getcwd()  +"/"
+            self.data_path = self.current_folder_path + "datas/"
         else:
             
             if data_path[-1] != "/":
@@ -73,11 +72,8 @@ class Worker_upjong:
 
         
         ## Message 
-        token_file = current_folder_path + 'token/telegram_token.txt'
-        with open(token_file,'r') as f:
-            self.token = f.readlines()[0].strip()
-        
-        self.msg = ms.Mymsg(self.token,chat_name='sean78_bot')
+        token_file = self.current_folder_path + 'token/telegram_token.txt'
+        self.msg = ms.Mymsg(token_file,chat_name='sean78_bot')
         script_name = __file__.split("/")[-1]
 
         self.msg.send_message(f'{script_name} {self.__class__.__name__}  start! ')
@@ -86,25 +82,24 @@ class Worker_upjong:
 
         self.msg.send_message(f'{script_name} {self.__class__.__name__}  finished! ')
 
-# 03 기본정보
+# 03 기본정보  ## multi로따로 구성.03.collect_basic_info...py
 class Worker_basic_info:
     '''
     기본정보 저장하기. 
     '''
     def __init__(self,data_path=None):
         if data_path == None:
-            current_folder_path = os.getcwd()  +"/"
-            data_path = current_folder_path + "datas/"
+            self.current_folder_path = os.getcwd()  +"/"
+            self.data_path = self.current_folder_path + "datas/"
         else:
             if data_path[-1] != "/":
                 data_path += "/"
             self.data_path = data_path
         
         ## Message 
-        with open(current_folder_path + 'token/telegram_token.txt','r') as f:
-            self.token = f.readlines()[0].strip()
+        token_file = self.current_folder_path + 'token/telegram_token.txt'
         
-        self.msg = ms.Mymsg(self.token,chat_name='sean78_bot')
+        self.msg = ms.Mymsg(token_file, chat_name='sean78_bot')
         script_name = __file__.split("/")[-1]
 
         self.msg.send_message(f'{script_name} {self.__class__.__name__}  start! ')
@@ -121,18 +116,16 @@ class Worker_재무제표:
     '''
     def __init__(self, data_path=None):
         if data_path == None:
-            current_folder_path = os.getcwd()  +"/"
-            data_path = current_folder_path + "datas/"
+            self.current_folder_path = os.getcwd()  +"/"
+            self.data_path = self.current_folder_path + "datas/"
         else:
-            if data_path[-1] != "/":
-                data_path += "/"
+            if self.data_path[-1] != "/":
+                self.data_path += "/"
             self.data_path = data_path
         
         ## Message 
-        with open(current_folder_path+'token/telegram_token.txt','r') as f:
-            self.token = f.readlines()[0].strip()
-        
-        self.msg = ms.Mymsg(self.token,chat_name='sean78_bot')
+        token_file = self.current_folder_path+'token/telegram_token.txt'
+        self.msg = ms.Mymsg(token_file, chat_name='sean78_bot')
         script_name = __file__.split("/")[-1]
 
         self.msg.send_message(f'{script_name} {self.__class__.__name__}  start! ')
@@ -148,18 +141,17 @@ class Worker_issue:
     '''
     def __init__(self, data_path=None):
         if data_path == None:
-            current_folder_path = os.getcwd()  +"/"
-            data_path = current_folder_path + "datas/"
+            self.current_folder_path = os.getcwd()  +"/"
+            self.data_path = self.current_folder_path + "datas/"
         else:
             if data_path[-1] != "/":
                 data_path += "/"
             self.data_path = data_path
     
         ## Message 
-        with open(current_folder_path+'token/telegram_token.txt','r') as f:
-            self.token = f.readlines()[0].strip()
+        token_file = self.current_folder_path+'token/telegram_token.txt'
         
-        self.msg = ms.Mymsg(self.token,chat_name='sean78_bot')
+        self.msg = ms.Mymsg(token_file,chat_name='sean78_bot')
         script_name = __file__.split("/")[-1]
 
         self.msg.send_message(f'{script_name} {self.__class__.__name__}  start! ')
@@ -176,19 +168,17 @@ class Worker_table_data_to_db:
     '''
     def __init__(self, data_path=None):
         if data_path == None:
-            current_folder_path = os.getcwd()  +"/"
-            data_path = current_folder_path + "datas/"
+            self.current_folder_path = os.getcwd()  +"/"
+            self.data_path = self.current_folder_path + "datas/"
         else:
             if data_path[-1] != "/":
                 data_path += "/"
             self.data_path = data_path
 
-        
         ## Message 
-        with open(current_folder_path + 'token/telegram_token.txt','r') as f:
-            self.token = f.readlines()[0].strip()
+        token_file = self.current_folder_path + 'token/telegram_token.txt'
         
-        self.msg = ms.Mymsg(self.token,chat_name='sean78_bot')
+        self.msg = ms.Mymsg(token_file, chat_name='sean78_bot')
         script_name = __file__.split("/")[-1]
 
         self.msg.send_message(f'{script_name} {self.__class__.__name__}  start! ')
@@ -197,7 +187,8 @@ class Worker_table_data_to_db:
         # result = ms.Thinkpool.update_issue_code(self.data_path)
 
         self.msg.send_message(f'{script_name} {self.__class__.__name__} 테이블재무제표 저장 finished! ')
-        
+
+
 ## 07 매일 지수 확인. 
 class Worker_get_index():
     def __init__(self):

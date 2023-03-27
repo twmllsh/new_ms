@@ -1,1 +1,1 @@
-__all__ = ['todo']
+__all__ = ['todo','collect_basic_info']
