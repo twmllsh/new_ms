@@ -135,7 +135,7 @@ class Worker_재무제표:
         self.msg.send_message(f'{script_name} {self.__class__.__name__}  finished!! ')
 
 # 05 이슈
-class Worker_issue:
+class Worker_issue
     '''
     thinkpool 이슈정보 업데이트 
     '''
